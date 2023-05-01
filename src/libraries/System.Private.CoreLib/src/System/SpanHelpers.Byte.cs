@@ -804,8 +804,6 @@ namespace System
 
             if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<byte>.Count)
             {
-                int diff;
-
 #if TARGET_64BIT
                 while (length >= 8)
                 {
@@ -815,7 +813,7 @@ namespace System
                     if (mask != 0)
                     {
                         offset += (uint)BitOperations.TrailingZeroCount(mask) / 8;
-                        diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                         return diff;
                     }
 
@@ -831,7 +829,7 @@ namespace System
                     if (mask != 0)
                     {
                         offset += (uint)BitOperations.TrailingZeroCount(mask) / 4;
-                        diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                         return diff;
                     }
 
@@ -842,7 +840,7 @@ namespace System
                 {
                     length--;
 
-                    diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                    int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                     if (diff != 0)
                         return diff;
 
@@ -854,17 +852,16 @@ namespace System
                 uint matches;
                 if (Vector256.IsHardwareAccelerated && length >= (nuint)Vector256<byte>.Count)
                 {
-                    Vector256<byte> values0, values1, equals;
+                    Vector256<byte> values0, values1;
 
                     nuint lengthToExamine = length - (nuint)Vector256<byte>.Count;
                     while (lengthToExamine > offset)
                     {
                         values0 = Vector256.LoadUnsafe(ref first, offset);
                         values1 = Vector256.LoadUnsafe(ref second, offset);
-                        equals = Vector256.Equals(values0, values1);
-                        if (equals != Vector256<byte>.Zero)
+                        matches = Vector256.Equals(values0, values1).ExtractMostSignificantBits();
+                        if (matches != uint.MaxValue)
                         {
-                            matches = equals.ExtractMostSignificantBits();
                             goto Difference;
                         }
 
@@ -874,27 +871,25 @@ namespace System
                     offset = lengthToExamine;
                     values0 = Vector256.LoadUnsafe(ref first, offset);
                     values1 = Vector256.LoadUnsafe(ref second, offset);
-                    equals = Vector256.Equals(values0, values1);
-                    if (equals != Vector256<byte>.Zero)
+                    matches = Vector256.Equals(values0, values1).ExtractMostSignificantBits();
+                    if (matches == uint.MaxValue)
                     {
-                        matches = equals.ExtractMostSignificantBits();
-                        goto Difference;
+                        goto Equal;
                     }
 
-                    goto Equal;
+                    // fall through to TrailingZeroCount
                 }
                 else
                 {
-                    Vector128<byte> values0, values1, equals;
+                    Vector128<byte> values0, values1;
                     nuint lengthToExamine = length - (nuint)Vector128<byte>.Count;
                     while (lengthToExamine > offset)
                     {
                         values0 = Vector128.LoadUnsafe(ref first, offset);
                         values1 = Vector128.LoadUnsafe(ref second, offset);
-                        equals = Vector128.Equals(values0, values1);
-                        if (equals != Vector128<byte>.Zero)
+                        matches = Vector128.Equals(values0, values1).ExtractMostSignificantBits();
+                        if (matches != ushort.MaxValue)
                         {
-                            matches = equals.ExtractMostSignificantBits();
                             goto Difference;
                         }
 
@@ -904,14 +899,13 @@ namespace System
                     offset = lengthToExamine;
                     values0 = Vector128.LoadUnsafe(ref first, offset);
                     values1 = Vector128.LoadUnsafe(ref second, offset);
-                    equals = Vector128.Equals(values0, values1);
-                    if (equals != Vector128<byte>.Zero)
+                    matches = Vector128.Equals(values0, values1).ExtractMostSignificantBits();
+                    if (matches == ushort.MaxValue)
                     {
-                        matches = equals.ExtractMostSignificantBits();
-                        goto Difference;
+                        goto Equal;
                     }
 
-                    goto Equal;
+                    // fall through to TrailingZeroCount
                 }
 
             Difference:
