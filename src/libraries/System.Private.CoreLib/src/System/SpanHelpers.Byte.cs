@@ -789,167 +789,140 @@ namespace System
             return i * 8 + LocateFirstFoundByte(candidate);
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static unsafe int SequenceCompareTo(ref byte first, int firstLength, ref byte second, int secondLength)
         {
             Debug.Assert(firstLength >= 0);
             Debug.Assert(secondLength >= 0);
 
+            int lengthDelta = firstLength - secondLength;
             if (Unsafe.AreSame(ref first, ref second))
                 goto Equal;
 
-            nuint minLength = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
+            nuint length = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
 
             nuint offset = 0; // Use nuint for arithmetic to avoid unnecessary 64->32->64 truncations
-            nuint lengthToExamine = minLength;
 
-            if (Vector256.IsHardwareAccelerated)
+            if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<byte>.Count)
             {
-                if (lengthToExamine >= (nuint)Vector256<byte>.Count)
+                int diff;
+
+#if TARGET_64BIT
+                while (length >= 8)
                 {
-                    lengthToExamine -= (nuint)Vector256<byte>.Count;
-                    uint matches;
-                    while (lengthToExamine > offset)
+                    length -= 8;
+
+                    nuint mask = LoadNUInt(ref first, offset) ^ LoadNUInt(ref second, offset);
+                    if (mask != 0)
                     {
-                        matches = Vector256.Equals(Vector256.LoadUnsafe(ref first, offset), Vector256.LoadUnsafe(ref second, offset)).ExtractMostSignificantBits();
-                        // Note that MoveMask has converted the equal vector elements into a set of bit flags,
-                        // So the bit position in 'matches' corresponds to the element offset.
-
-                        // 32 elements in Vector256<byte> so we compare to uint.MaxValue to check if everything matched
-                        if (matches == uint.MaxValue)
-                        {
-                            // All matched
-                            offset += (nuint)Vector256<byte>.Count;
-                            continue;
-                        }
-
-                        goto Difference;
+                        offset += (uint)BitOperations.TrailingZeroCount(mask) / 8;
+                        diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        return diff;
                     }
-                    // Move to Vector length from end for final compare
-                    offset = lengthToExamine;
-                    // Same as method as above
-                    matches = Vector256.Equals(Vector256.LoadUnsafe(ref first, offset), Vector256.LoadUnsafe(ref second, offset)).ExtractMostSignificantBits();
-                    if (matches == uint.MaxValue)
+
+                    offset += 8;
+                }
+#endif
+
+                while (length >= 4)
+                {
+                    length -= 4;
+
+                    uint mask = LoadUInt(ref first, offset) ^ LoadUInt(ref second, offset);
+                    if (mask != 0)
                     {
-                        // All matched
-                        goto Equal;
+                        offset += (uint)BitOperations.TrailingZeroCount(mask) / 4;
+                        diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        return diff;
                     }
-                Difference:
-                    // Invert matches to find differences
-                    uint differences = ~matches;
-                    // Find bitflag offset of first difference and add to current offset
-                    offset += (uint)BitOperations.TrailingZeroCount(differences);
 
-                    int result = Unsafe.AddByteOffset(ref first, offset).CompareTo(Unsafe.AddByteOffset(ref second, offset));
-                    Debug.Assert(result != 0);
-
-                    return result;
+                    offset += 4;
                 }
 
-                if (lengthToExamine >= (nuint)Vector128<byte>.Count)
+                while (length != 0)
                 {
-                    lengthToExamine -= (nuint)Vector128<byte>.Count;
-                    uint matches;
-                    if (lengthToExamine > offset)
-                    {
-                        matches = Vector128.Equals(Vector128.LoadUnsafe(ref first, offset), Vector128.LoadUnsafe(ref second, offset)).ExtractMostSignificantBits();
-                        // Note that MoveMask has converted the equal vector elements into a set of bit flags,
-                        // So the bit position in 'matches' corresponds to the element offset.
+                    length--;
 
-                        // 16 elements in Vector128<byte> so we compare to ushort.MaxValue to check if everything matched
-                        if (matches != ushort.MaxValue)
+                    diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                    if (diff != 0)
+                        return diff;
+
+                    offset++;
+                }
+            }
+            else // if (Vector128.IsHardwareAccelerated && minLength >= (nuint)Vector128<byte>.Count)
+            {
+                uint matches;
+                if (Vector256.IsHardwareAccelerated && length >= (nuint)Vector256<byte>.Count)
+                {
+                    Vector256<byte> values0, values1, equals;
+
+                    nuint lengthToExamine = length - (nuint)Vector256<byte>.Count;
+                    while (lengthToExamine > offset)
+                    {
+                        values0 = Vector256.LoadUnsafe(ref first, offset);
+                        values1 = Vector256.LoadUnsafe(ref second, offset);
+                        equals = Vector256.Equals(values0, values1);
+                        if (equals != Vector256<byte>.Zero)
                         {
+                            matches = equals.ExtractMostSignificantBits();
                             goto Difference;
                         }
+
+                        offset += (nuint)Vector256<byte>.Count;
                     }
-                    // Move to Vector length from end for final compare
+
                     offset = lengthToExamine;
-                    // Same as method as above
-                    matches = Vector128.Equals(Vector128.LoadUnsafe(ref first, offset), Vector128.LoadUnsafe(ref second, offset)).ExtractMostSignificantBits();
-                    if (matches == ushort.MaxValue)
+                    values0 = Vector256.LoadUnsafe(ref first, offset);
+                    values1 = Vector256.LoadUnsafe(ref second, offset);
+                    equals = Vector256.Equals(values0, values1);
+                    if (equals != Vector256<byte>.Zero)
                     {
-                        // All matched
-                        goto Equal;
+                        matches = equals.ExtractMostSignificantBits();
+                        goto Difference;
                     }
-                Difference:
-                    // Invert matches to find differences
-                    uint differences = ~matches;
-                    // Find bitflag offset of first difference and add to current offset
-                    offset += (uint)BitOperations.TrailingZeroCount(differences);
 
-                    int result = Unsafe.AddByteOffset(ref first, offset).CompareTo(Unsafe.AddByteOffset(ref second, offset));
-                    Debug.Assert(result != 0);
-
-                    return result;
+                    goto Equal;
                 }
-            }
-            else if (Vector128.IsHardwareAccelerated)
-            {
-                if (lengthToExamine >= (nuint)Vector128<byte>.Count)
+                else
                 {
-                    lengthToExamine -= (nuint)Vector128<byte>.Count;
+                    Vector128<byte> values0, values1, equals;
+                    nuint lengthToExamine = length - (nuint)Vector128<byte>.Count;
                     while (lengthToExamine > offset)
                     {
-                        if (Vector128.LoadUnsafe(ref first, offset) == Vector128.LoadUnsafe(ref second, offset))
+                        values0 = Vector128.LoadUnsafe(ref first, offset);
+                        values1 = Vector128.LoadUnsafe(ref second, offset);
+                        equals = Vector128.Equals(values0, values1);
+                        if (equals != Vector128<byte>.Zero)
                         {
-                            // All matched
-                            offset += (nuint)Vector128<byte>.Count;
-                            continue;
+                            matches = equals.ExtractMostSignificantBits();
+                            goto Difference;
                         }
 
-                        goto BytewiseCheck;
+                        offset += (nuint)Vector128<byte>.Count;
                     }
-                    // Move to Vector length from end for final compare
+
                     offset = lengthToExamine;
-                    if (Vector128.LoadUnsafe(ref first, offset) == Vector128.LoadUnsafe(ref second, offset))
+                    values0 = Vector128.LoadUnsafe(ref first, offset);
+                    values1 = Vector128.LoadUnsafe(ref second, offset);
+                    equals = Vector128.Equals(values0, values1);
+                    if (equals != Vector128<byte>.Zero)
                     {
-                        // All matched
-                        goto Equal;
+                        matches = equals.ExtractMostSignificantBits();
+                        goto Difference;
                     }
-                    goto BytewiseCheck;
-                }
-            }
-            else if (Vector.IsHardwareAccelerated)
-            {
-                if (lengthToExamine > (nuint)Vector<byte>.Count)
-                {
-                    lengthToExamine -= (nuint)Vector<byte>.Count;
-                    while (lengthToExamine > offset)
-                    {
-                        if (LoadVector(ref first, offset) != LoadVector(ref second, offset))
-                        {
-                            goto BytewiseCheck;
-                        }
-                        offset += (nuint)Vector<byte>.Count;
-                    }
-                    goto BytewiseCheck;
-                }
-            }
 
-            if (lengthToExamine > (nuint)sizeof(nuint))
-            {
-                lengthToExamine -= (nuint)sizeof(nuint);
-                while (lengthToExamine > offset)
-                {
-                    if (LoadNUInt(ref first, offset) != LoadNUInt(ref second, offset))
-                    {
-                        goto BytewiseCheck;
-                    }
-                    offset += (nuint)sizeof(nuint);
+                    goto Equal;
                 }
-            }
 
-        BytewiseCheck:  // Workaround for https://github.com/dotnet/runtime/issues/8795
-            while (minLength > offset)
-            {
-                int result = Unsafe.AddByteOffset(ref first, offset).CompareTo(Unsafe.AddByteOffset(ref second, offset));
-                if (result != 0)
-                    return result;
-                offset += 1;
+            Difference:
+                offset += (uint)BitOperations.TrailingZeroCount(~matches);
+                int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                Debug.Assert(diff != 0);
+                return diff;
             }
 
         Equal:
-            return firstLength - secondLength;
+            return lengthDelta;
         }
 
         public static nuint CommonPrefixLength(ref byte first, ref byte second, nuint length)

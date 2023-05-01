@@ -355,65 +355,123 @@ namespace System
             }
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static unsafe int SequenceCompareTo(ref char first, int firstLength, ref char second, int secondLength)
         {
             Debug.Assert(firstLength >= 0);
             Debug.Assert(secondLength >= 0);
 
             int lengthDelta = firstLength - secondLength;
-
             if (Unsafe.AreSame(ref first, ref second))
                 goto Equal;
 
-            nuint minLength = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
-            nuint i = 0; // Use nuint for arithmetic to avoid unnecessary 64->32->64 truncations
+            nuint length = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
 
-            if (minLength >= (nuint)(sizeof(nuint) / sizeof(char)))
+            nuint offset = 0; // Use nuint for arithmetic to avoid unnecessary 64->32->64 truncations
+
+            if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<ushort>.Count)
             {
-                if (Vector.IsHardwareAccelerated && minLength >= (nuint)Vector<ushort>.Count)
-                {
-                    nuint nLength = minLength - (nuint)Vector<ushort>.Count;
-                    do
-                    {
-                        if (Unsafe.ReadUnaligned<Vector<ushort>>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, (nint)i))) !=
-                            Unsafe.ReadUnaligned<Vector<ushort>>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, (nint)i))))
-                        {
-                            break;
-                        }
-                        i += (nuint)Vector<ushort>.Count;
-                    }
-                    while (nLength >= i);
-                }
-
-                while (minLength >= (i + (nuint)(sizeof(nuint) / sizeof(char))))
-                {
-                    if (Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, (nint)i))) !=
-                        Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, (nint)i))))
-                    {
-                        break;
-                    }
-                    i += (nuint)(sizeof(nuint) / sizeof(char));
-                }
-            }
-
 #if TARGET_64BIT
-            if (minLength >= (i + sizeof(int) / sizeof(char)))
-            {
-                if (Unsafe.ReadUnaligned<int>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, (nint)i))) ==
-                    Unsafe.ReadUnaligned<int>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, (nint)i))))
+                while (length >= 4)
                 {
-                    i += sizeof(int) / sizeof(char);
+                    length -= 4;
+
+                    nuint values0 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, offset)));
+                    nuint values1 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, offset)));
+                    nuint mask = values0 ^ values1;
+                    if (mask != 0)
+                    {
+                        offset += (uint)BitOperations.TrailingZeroCount(mask) / 4;
+                        int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        return diff;
+                    }
+                    offset += 4;
                 }
-            }
 #endif
 
-            while (i < minLength)
+                while (length != 0)
+                {
+                    length--;
+
+                    int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                    if (diff != 0)
+                        return diff;
+
+                    offset++;
+                }
+
+                goto Equal;
+            }
+            else // if (Vector128.IsHardwareAccelerated && minLength >= (nuint)Vector128<ushort>.Count)
             {
-                int result = Unsafe.Add(ref first, (nint)i).CompareTo(Unsafe.Add(ref second, (nint)i));
-                if (result != 0)
-                    return result;
-                i += 1;
+                uint matches;
+                if (Vector256.IsHardwareAccelerated && length >= (nuint)Vector256<ushort>.Count)
+                {
+                    Vector256<ushort> values0, values1;
+                    Vector256<byte> equals;
+
+                    length -= (nuint)Vector256<ushort>.Count;
+                    while (length > offset)
+                    {
+                        values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                        values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                        equals = Vector256.Equals(values0, values1).AsByte();
+                        if (equals != Vector256<byte>.Zero)
+                        {
+                            matches = equals.ExtractMostSignificantBits();
+                            goto Difference;
+                        }
+
+                        offset += (nuint)Vector256<ushort>.Count;
+                    }
+
+                    values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                    values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                    equals = Vector256.Equals(values0, values1).AsByte();
+                    if (equals != Vector256<byte>.Zero)
+                    {
+                        matches = equals.ExtractMostSignificantBits();
+                        goto Difference;
+                    }
+
+                    goto Equal;
+                }
+                else
+                {
+                    Vector128<ushort> values0, values1;
+                    Vector128<byte> equals;
+
+                    length -= (nuint)Vector128<ushort>.Count;
+                    while (length > offset)
+                    {
+                        values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                        values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                        equals = Vector128.Equals(values0, values1).AsByte();
+                        if (equals != Vector128<byte>.Zero)
+                        {
+                            matches = equals.ExtractMostSignificantBits();
+                            goto Difference;
+                        }
+
+                        offset += (nuint)Vector128<ushort>.Count;
+                    }
+
+                    // = lengthToExamine;
+                    values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                    values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                    equals = Vector128.Equals(values0, values1).AsByte();
+                    if (equals != Vector128<byte>.Zero)
+                    {
+                        matches = equals.ExtractMostSignificantBits();
+                        goto Difference;
+                    }
+
+                    goto Equal;
+                }
+
+            Difference:
+                offset += (uint)BitOperations.TrailingZeroCount(~matches) / sizeof(char);
+                int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                Debug.Assert(diff != 0);
             }
 
         Equal:
