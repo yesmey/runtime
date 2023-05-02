@@ -360,12 +360,11 @@ namespace System
             Debug.Assert(firstLength >= 0);
             Debug.Assert(secondLength >= 0);
 
-            int lengthDelta = firstLength - secondLength;
+            int result = firstLength - secondLength;
             if (Unsafe.AreSame(ref first, ref second))
                 goto Equal;
 
             nuint length = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
-
             nuint offset = 0; // Use nuint for arithmetic to avoid unnecessary 64->32->64 truncations
 
             if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<ushort>.Count)
@@ -373,17 +372,16 @@ namespace System
 #if TARGET_64BIT
                 while (length >= 4)
                 {
-                    length -= 4;
-
                     nuint values0 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, offset)));
                     nuint values1 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, offset)));
                     nuint mask = values0 ^ values1;
                     if (mask != 0)
                     {
-                        offset += (uint)BitOperations.TrailingZeroCount(mask) / 4;
-                        int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
-                        return diff;
+                        offset += (uint)BitOperations.TrailingZeroCount(mask) >> 4;
+                        return Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                     }
+
+                    length -= 4;
                     offset += 4;
                 }
 #endif
@@ -409,25 +407,28 @@ namespace System
                     Vector256<ushort> values0, values1;
 
                     length -= (nuint)Vector256<ushort>.Count;
-                    while (length > offset)
+                    do
                     {
                         values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
                         values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
                         matches = Vector256.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
                         if (matches != uint.MaxValue)
                         {
-                            goto Difference;
+                            goto Matches;
                         }
 
                         offset += (nuint)Vector256<ushort>.Count;
-                    }
+                    } while (length > offset);
 
-                    values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
-                    values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
-                    matches = Vector256.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
-                    if (matches != uint.MaxValue)
+                    if (length % (uint)Vector256<ushort>.Count == 0)
                     {
-                        goto Difference;
+                        values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                        values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                        matches = Vector256.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
+                        if (matches != uint.MaxValue)
+                        {
+                            goto Matches;
+                        }
                     }
 
                     goto Equal;
@@ -437,38 +438,40 @@ namespace System
                     Vector128<ushort> values0, values1;
 
                     length -= (nuint)Vector128<ushort>.Count;
-                    while (length > offset)
+                    do
                     {
                         values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
                         values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
                         matches = Vector128.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
                         if (matches != ushort.MaxValue)
                         {
-                            goto Difference;
+                            goto Matches;
                         }
 
                         offset += (nuint)Vector128<ushort>.Count;
-                    }
+                    } while (length > offset);
 
-                    values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
-                    values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
-                    matches = Vector128.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
-                    if (matches != ushort.MaxValue)
+                    if (length % (uint)Vector128<ushort>.Count == 0)
                     {
-                        goto Difference;
+                        values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
+                        values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
+                        matches = Vector128.Equals(values0, values1).AsByte().ExtractMostSignificantBits();
+                        if (matches != ushort.MaxValue)
+                        {
+                            goto Matches;
+                        }
                     }
 
                     goto Equal;
                 }
 
-            Difference:
+            Matches:
                 offset += (uint)BitOperations.TrailingZeroCount(~matches) / sizeof(char);
-                int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
-                Debug.Assert(diff != 0);
+                return Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
             }
 
         Equal:
-            return lengthDelta;
+            return result;
         }
 
         // IndexOfNullCharacter processes memory in aligned chunks, and thus it won't crash even if it accesses memory beyond the null terminator.
