@@ -366,35 +366,47 @@ namespace System
 
             if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<ushort>.Count)
             {
-                while (length >= 4)
+                while (length >= offset + sizeof(char) * 2)
                 {
                     nuint values0 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, offset)));
                     nuint values1 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, offset)));
                     if (values0 != values1)
                     {
-                        offset += (uint)BitOperations.TrailingZeroCount(values0 ^ values1) >>> 4;
-                        return Unsafe.Add(ref first, offset) - Unsafe.Add(ref second, offset);
+                        int diff = ((char)values0).CompareTo((char)values1);
+                        if (diff != 0)
+                            return diff;
+
+                        diff = ((char)(values0 >>> 16)).CompareTo((char)(values1 >>> 16));
+                        if (diff != 0)
+                            return diff;
+
+                        diff = ((char)(values0 >>> 32)).CompareTo((char)(values1 >>> 32));
+                        if (diff != 0)
+                            return diff;
+
+                        return ((char)(values0 >>> 48)).CompareTo((char)(values1 >>> 48));
                     }
 
-                    length -= 4;
-                    offset += 4;
+                    offset = 4;
                 }
 
-                if (length >= 2)
+                if ((length & 2) != 0)
                 {
-                    int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
-                    if (diff != 0)
-                        return diff;
+                    uint values0 = Unsafe.ReadUnaligned<uint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, offset)));
+                    uint values1 = Unsafe.ReadUnaligned<uint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, offset)));
+                    if (values0 != values1)
+                    {
+                        int diff = ((char)values0).CompareTo((char)values1);
+                        if (diff != 0)
+                            return diff;
 
-                    diff = Unsafe.Add(ref first, offset + 1).CompareTo(Unsafe.Add(ref second, offset + 1));
-                    if (diff != 0)
-                        return diff;
+                        return ((char)(values0 >>> 16)).CompareTo((char)(values1 >>> 16));
+                    }
 
-                    length -= 2;
                     offset += 2;
                 }
 
-                if (length > 0)
+                if ((length & 1) != 0)
                 {
                     int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                     if (diff != 0)
