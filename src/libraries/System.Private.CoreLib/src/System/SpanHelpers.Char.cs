@@ -361,46 +361,51 @@ namespace System
             Debug.Assert(secondLength >= 0);
 
             int result = firstLength - secondLength;
-            if (Unsafe.AreSame(ref first, ref second))
-                goto Equal;
-
             nuint length = (nuint)(((uint)firstLength < (uint)secondLength) ? (uint)firstLength : (uint)secondLength);
             nuint offset = 0; // Use nuint for arithmetic to avoid unnecessary 64->32->64 truncations
 
             if (!Vector128.IsHardwareAccelerated || length < (nuint)Vector128<ushort>.Count)
             {
-#if TARGET_64BIT
                 while (length >= 4)
                 {
                     nuint values0 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref first, offset)));
                     nuint values1 = Unsafe.ReadUnaligned<nuint>(ref Unsafe.As<char, byte>(ref Unsafe.Add(ref second, offset)));
-                    nuint mask = values0 ^ values1;
-                    if (mask != 0)
+                    if (values0 != values1)
                     {
-                        offset += (uint)BitOperations.TrailingZeroCount(mask) >> 4;
-                        return Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                        offset += (uint)BitOperations.TrailingZeroCount(values0 ^ values1) >>> 4;
+                        return Unsafe.Add(ref first, offset) - Unsafe.Add(ref second, offset);
                     }
 
                     length -= 4;
                     offset += 4;
                 }
-#endif
 
-                while (length != 0)
+                if (length >= 2)
                 {
-                    length--;
-
                     int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
                     if (diff != 0)
                         return diff;
 
-                    offset++;
+                    diff = Unsafe.Add(ref first, offset + 1).CompareTo(Unsafe.Add(ref second, offset + 1));
+                    if (diff != 0)
+                        return diff;
+
+                    length -= 2;
+                    offset += 2;
                 }
 
-                goto Equal;
+                if (length > 0)
+                {
+                    int diff = Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                    if (diff != 0)
+                        return diff;
+                }
             }
             else // if (Vector128.IsHardwareAccelerated && minLength >= (nuint)Vector128<ushort>.Count)
             {
+                if (Unsafe.AreSame(ref first, ref second))
+                    goto Equals;
+
                 uint matches;
                 if (Vector256.IsHardwareAccelerated && length >= (nuint)Vector256<ushort>.Count)
                 {
@@ -420,7 +425,7 @@ namespace System
                         offset += (nuint)Vector256<ushort>.Count;
                     } while (length > offset);
 
-                    if (length % (uint)Vector256<ushort>.Count == 0)
+                    if (length % (uint)Vector256<ushort>.Count != 0)
                     {
                         values0 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
                         values1 = Vector256.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
@@ -431,7 +436,7 @@ namespace System
                         }
                     }
 
-                    goto Equal;
+                    goto Equals;
                 }
                 else
                 {
@@ -451,7 +456,7 @@ namespace System
                         offset += (nuint)Vector128<ushort>.Count;
                     } while (length > offset);
 
-                    if (length % (uint)Vector128<ushort>.Count == 0)
+                    if (length % (uint)Vector128<ushort>.Count != 0)
                     {
                         values0 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref first), offset);
                         values1 = Vector128.LoadUnsafe(ref Unsafe.As<char, ushort>(ref second), offset);
@@ -462,15 +467,15 @@ namespace System
                         }
                     }
 
-                    goto Equal;
+                    goto Equals;
                 }
 
             Matches:
                 offset += (uint)BitOperations.TrailingZeroCount(~matches) / sizeof(char);
-                return Unsafe.Add(ref first, offset).CompareTo(Unsafe.Add(ref second, offset));
+                return Unsafe.Add(ref first, offset) - Unsafe.Add(ref second, offset);
             }
 
-        Equal:
+        Equals:
             return result;
         }
 
