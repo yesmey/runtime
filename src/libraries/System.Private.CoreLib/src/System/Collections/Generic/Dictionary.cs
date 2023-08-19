@@ -1389,12 +1389,12 @@ namespace System.Collections.Generic
                     ThrowHelper.ThrowInvalidOperationException_InvalidOperation_EnumFailedVersion();
                 }
 
+                Entry[]? entries = _dictionary._entries;
                 // Use unsigned comparison since we set index to dictionary.count+1 when the enumeration ends.
                 // dictionary.count+1 could be negative if dictionary.count is int.MaxValue
                 while ((uint)_index < (uint)_dictionary._count)
                 {
-                    ref Entry entry = ref _dictionary._entries![_index++];
-
+                    ref Entry entry = ref entries![_index++];
                     if (entry.next >= -1)
                     {
                         _current = new KeyValuePair<TKey, TValue>(entry.key, entry.value);
@@ -1631,10 +1631,12 @@ namespace System.Collections.Generic
                         ThrowHelper.ThrowInvalidOperationException_InvalidOperation_EnumFailedVersion();
                     }
 
+                    Entry[]? entries = _dictionary._entries;
+                    // Use unsigned comparison since we set index to dictionary.count+1 when the enumeration ends.
+                    // dictionary.count+1 could be negative if dictionary.count is int.MaxValue
                     while ((uint)_index < (uint)_dictionary._count)
                     {
-                        ref Entry entry = ref _dictionary._entries![_index++];
-
+                        ref Entry entry = ref entries![_index++];
                         if (entry.next >= -1)
                         {
                             _currentKey = entry.key;
@@ -1825,16 +1827,19 @@ namespace System.Collections.Generic
                         ThrowHelper.ThrowInvalidOperationException_InvalidOperation_EnumFailedVersion();
                     }
 
+                    Entry[]? entries = _dictionary._entries;
+                    // Use unsigned comparison since we set index to dictionary.count+1 when the enumeration ends.
+                    // dictionary.count+1 could be negative if dictionary.count is int.MaxValue
                     while ((uint)_index < (uint)_dictionary._count)
                     {
-                        ref Entry entry = ref _dictionary._entries![_index++];
-
+                        ref Entry entry = ref entries![_index++];
                         if (entry.next >= -1)
                         {
                             _currentValue = entry.value;
                             return true;
                         }
                     }
+
                     _index = _dictionary._count + 1;
                     _currentValue = default;
                     return false;
