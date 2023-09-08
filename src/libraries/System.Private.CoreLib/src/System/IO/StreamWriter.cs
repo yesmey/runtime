@@ -388,7 +388,7 @@ namespace System.IO
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private unsafe void WriteSpan(ReadOnlySpan<char> buffer, bool appendNewLine)
+        private void WriteSpan(ReadOnlySpan<char> buffer, bool appendNewLine)
         {
             CheckAsyncTaskInProgress();
 
@@ -411,32 +411,25 @@ namespace System.IO
                 // make local copies of instance state to protect against potential concurrent misuse.
 
                 ThrowIfDisposed();
+
                 char[] charBuffer = _charBuffer;
-
-                fixed (char* bufferPtr = &MemoryMarshal.GetReference(buffer))
-                fixed (char* dstPtr = &charBuffer[0])
+                int position = _charPos;
+                while (buffer.Length > 0)
                 {
-                    char* srcPtr = bufferPtr;
-                    int count = buffer.Length;
-                    int dstPos = _charPos; // use a local copy of _charPos for safety
-                    while (count > 0)
+                    if (position == charBuffer.Length)
                     {
-                        if (dstPos == charBuffer.Length)
-                        {
-                            Flush(false, false);
-                            dstPos = 0;
-                        }
-
-                        int n = Math.Min(charBuffer.Length - dstPos, count);
-                        int bytesToCopy = n * sizeof(char);
-
-                        Buffer.MemoryCopy(srcPtr, dstPtr + dstPos, bytesToCopy, bytesToCopy);
-
-                        _charPos += n;
-                        dstPos += n;
-                        srcPtr += n;
-                        count -= n;
+                        Flush(false, false);
+                        position = 0;
                     }
+
+                    int lengthToCopy = Math.Min(charBuffer.Length - position, buffer.Length);
+
+                    buffer = buffer.Slice(0, lengthToCopy);
+                    buffer.CopyTo(charBuffer.AsSpan(position, lengthToCopy));
+
+                    buffer = buffer.Slice(lengthToCopy);
+                    position += lengthToCopy;
+                    _charPos += lengthToCopy;
                 }
             }
 
@@ -450,8 +443,7 @@ namespace System.IO
                         Flush(false, false);
                     }
 
-                    _charBuffer[_charPos] = coreNewLine[i];
-                    _charPos++;
+                    _charBuffer[_charPos++] = coreNewLine[i];
                 }
             }
 
