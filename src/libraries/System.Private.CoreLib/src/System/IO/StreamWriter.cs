@@ -93,10 +93,7 @@ namespace System.IO
         public StreamWriter(Stream stream, Encoding? encoding = null, int bufferSize = -1, bool leaveOpen = false)
             : base(null) // Ask for CurrentCulture all the time
         {
-            if (stream == null)
-            {
-                ThrowHelper.ThrowArgumentNullException(ExceptionArgument.stream);
-            }
+            ArgumentNullException.ThrowIfNull(stream);
 
             if (!stream.CanWrite)
             {
@@ -272,19 +269,23 @@ namespace System.IO
             ThrowIfDisposed();
 
             // Perf boost for Flush on non-dirty writers.
-            if (_charPos == 0 && !flushStream && !flushEncoder)
+            int charPos = _charPos;
+            if (charPos == 0 && !flushStream && !flushEncoder)
             {
                 return;
             }
 
+            var encoding = _encoding;
+            ReadOnlySpan<byte> preamble = encoding.Preamble;
+            int preambleSize;
             if (!_haveWrittenPreamble)
             {
                 _haveWrittenPreamble = true;
-                ReadOnlySpan<byte> preamble = _encoding.Preamble;
-                if (preamble.Length > 0)
-                {
-                    _stream.Write(preamble);
-                }
+                preambleSize = preamble.Length;
+            }
+            else
+            {
+                preambleSize = 0;
             }
 
             // For sufficiently small char data being flushed, try to encode to the stack.
@@ -296,17 +297,22 @@ namespace System.IO
             }
             else
             {
-                int maxBytesForCharPos = _encoding.GetMaxByteCount(_charPos);
+                int maxBytesForCharPos = preambleSize + encoding.GetMaxByteCount(charPos);
                 byteBuffer = maxBytesForCharPos <= 1024 ? // arbitrary threshold
                     stackalloc byte[1024] :
-                    (_byteBuffer = new byte[_encoding.GetMaxByteCount(_charBuffer.Length)]);
+                    (_byteBuffer = new byte[encoding.GetMaxByteCount(_charBuffer.Length)]);
             }
 
-            int count = _encoder.GetBytes(new ReadOnlySpan<char>(_charBuffer, 0, _charPos), byteBuffer, flushEncoder);
+            if (preambleSize > 0)
+            {
+                preamble.CopyTo(byteBuffer);
+            }
+
+            int count = _encoder.GetBytes(new ReadOnlySpan<char>(_charBuffer, 0, charPos), byteBuffer.Slice(preambleSize), flushEncoder);
             _charPos = 0;
             if (count > 0)
             {
-                _stream.Write(byteBuffer.Slice(0, count));
+                _stream.Write(byteBuffer.Slice(0, preambleSize + count));
             }
 
             if (flushStream)
@@ -366,7 +372,7 @@ namespace System.IO
             ArgumentOutOfRangeException.ThrowIfNegative(count);
             if (buffer.Length - index < count)
             {
-                throw new ArgumentException(SR.Argument_InvalidOffLen);
+                ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_InvalidOffLen);
             }
 
             WriteSpan(buffer.AsSpan(index, count), appendNewLine: false);
@@ -404,12 +410,6 @@ namespace System.IO
             }
             else
             {
-                // For larger buffers or when we may run out of room in the internal char buffer, copy in chunks.
-                // Use unsafe code until https://github.com/dotnet/runtime/issues/8890 is addressed, as spans are
-                // resulting in significant overhead (even when the if branch above is taken rather than this
-                // else) due to temporaries that need to be cleared.  Given the use of unsafe code, we also
-                // make local copies of instance state to protect against potential concurrent misuse.
-
                 ThrowIfDisposed();
 
                 char[] charBuffer = _charBuffer;
@@ -423,9 +423,7 @@ namespace System.IO
                     }
 
                     int lengthToCopy = Math.Min(charBuffer.Length - position, buffer.Length);
-
-                    buffer = buffer.Slice(0, lengthToCopy);
-                    buffer.CopyTo(charBuffer.AsSpan(position, lengthToCopy));
+                    buffer.Slice(0, lengthToCopy).CopyTo(charBuffer.AsSpan(position, lengthToCopy));
 
                     buffer = buffer.Slice(lengthToCopy);
                     position += lengthToCopy;
@@ -684,7 +682,7 @@ namespace System.IO
             ArgumentOutOfRangeException.ThrowIfNegative(count);
             if (buffer.Length - index < count)
             {
-                throw new ArgumentException(SR.Argument_InvalidOffLen);
+                ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_InvalidOffLen);
             }
 
             // If we have been inherited into a subclass, the following implementation could be incorrect
@@ -836,7 +834,7 @@ namespace System.IO
             ArgumentOutOfRangeException.ThrowIfNegative(count);
             if (buffer.Length - index < count)
             {
-                throw new ArgumentException(SR.Argument_InvalidOffLen);
+                ThrowHelper.ThrowArgumentException(ExceptionResource.Argument_InvalidOffLen);
             }
 
             // If we have been inherited into a subclass, the following implementation could be incorrect
@@ -963,6 +961,7 @@ namespace System.IO
                 ThrowObjectDisposedException();
             }
 
+            [DoesNotReturn]
             void ThrowObjectDisposedException() => throw new ObjectDisposedException(GetType().Name, SR.ObjectDisposed_WriterClosed);
         }
     }
