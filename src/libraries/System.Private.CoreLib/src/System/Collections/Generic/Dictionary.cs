@@ -405,21 +405,13 @@ namespace System.Collections.Generic
                     comparer == null)
                 {
                     uint hashCode = (uint)key.GetHashCode();
-                    int i = GetBucket(hashCode);
+                    int i = GetBucket(hashCode) - 1; // Value in _buckets is 1-based;
                     Entry[]? entries = _entries;
                     uint collisionCount = 0;
 
                     // ValueType: Devirtualize with EqualityComparer<TKey>.Default intrinsic
-                    i--; // Value in _buckets is 1-based; subtract 1 from i. We do it here so it fuses with the following conditional.
-                    do
+                    while ((uint)i < (uint)entries.Length)
                     {
-                        // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                        // Test in if to drop range check for following array access
-                        if ((uint)i >= (uint)entries.Length)
-                        {
-                            goto ReturnNotFound;
-                        }
-
                         entry = ref entries[i];
                         if (entry.hashCode == hashCode && EqualityComparer<TKey>.Default.Equals(entry.key, key))
                         {
@@ -429,29 +421,23 @@ namespace System.Collections.Generic
                         i = entry.next;
 
                         collisionCount++;
-                    } while (collisionCount <= (uint)entries.Length);
-
-                    // The chain of entries forms a loop; which means a concurrent update has happened.
-                    // Break out of the loop and throw, rather than looping forever.
-                    goto ConcurrentOperation;
+                        if (collisionCount > (uint)entries.Length)
+                        {
+                            // The chain of entries forms a loop; which means a concurrent update has happened.
+                            // Break out of the loop and throw, rather than looping forever.
+                            goto ConcurrentOperation;
+                        }
+                    }
                 }
                 else
                 {
                     Debug.Assert(comparer is not null);
                     uint hashCode = (uint)comparer.GetHashCode(key);
-                    int i = GetBucket(hashCode);
+                    int i = GetBucket(hashCode) - 1; // Value in _buckets is 1-based;
                     Entry[]? entries = _entries;
                     uint collisionCount = 0;
-                    i--; // Value in _buckets is 1-based; subtract 1 from i. We do it here so it fuses with the following conditional.
-                    do
+                    while ((uint)i < (uint)entries.Length)
                     {
-                        // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                        // Test in if to drop range check for following array access
-                        if ((uint)i >= (uint)entries.Length)
-                        {
-                            goto ReturnNotFound;
-                        }
-
                         entry = ref entries[i];
                         if (entry.hashCode == hashCode && comparer.Equals(entry.key, key))
                         {
@@ -461,11 +447,13 @@ namespace System.Collections.Generic
                         i = entry.next;
 
                         collisionCount++;
-                    } while (collisionCount <= (uint)entries.Length);
-
-                    // The chain of entries forms a loop; which means a concurrent update has happened.
-                    // Break out of the loop and throw, rather than looping forever.
-                    goto ConcurrentOperation;
+                        if (collisionCount > (uint)entries.Length)
+                        {
+                            // The chain of entries forms a loop; which means a concurrent update has happened.
+                            // Break out of the loop and throw, rather than looping forever.
+                            goto ConcurrentOperation;
+                        }
+                    }
                 }
             }
 
@@ -530,15 +518,8 @@ namespace System.Collections.Generic
                 comparer == null)
             {
                 // ValueType: Devirtualize with EqualityComparer<TKey>.Default intrinsic
-                while (true)
+                while ((uint)i < (uint)entries.Length)
                 {
-                    // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                    // Test uint in if rather than loop condition to drop range check for following array access
-                    if ((uint)i >= (uint)entries.Length)
-                    {
-                        break;
-                    }
-
                     if (entries[i].hashCode == hashCode && EqualityComparer<TKey>.Default.Equals(entries[i].key, key))
                     {
                         if (behavior == InsertionBehavior.OverwriteExisting)
@@ -569,15 +550,8 @@ namespace System.Collections.Generic
             else
             {
                 Debug.Assert(comparer is not null);
-                while (true)
+                while ((uint)i < (uint)entries.Length)
                 {
-                    // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                    // Test uint in if rather than loop condition to drop range check for following array access
-                    if ((uint)i >= (uint)entries.Length)
-                    {
-                        break;
-                    }
-
                     if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key))
                     {
                         if (behavior == InsertionBehavior.OverwriteExisting)
@@ -610,8 +584,8 @@ namespace System.Collections.Generic
             if (_freeCount > 0)
             {
                 index = _freeList;
-                Debug.Assert((StartOfFreeList - entries[_freeList].next) >= -1, "shouldn't overflow because `next` cannot underflow");
-                _freeList = StartOfFreeList - entries[_freeList].next;
+                Debug.Assert((StartOfFreeList - entries[index].next) >= -1, "shouldn't overflow because `next` cannot underflow");
+                _freeList = StartOfFreeList - entries[index].next;
                 _freeCount--;
             }
             else
@@ -620,11 +594,11 @@ namespace System.Collections.Generic
                 if (count == entries.Length)
                 {
                     Resize();
+                    entries = _entries;
                     bucket = ref GetBucket(hashCode);
                 }
                 index = count;
                 _count = count + 1;
-                entries = _entries;
             }
 
             ref Entry entry = ref entries![index];
@@ -685,15 +659,8 @@ namespace System.Collections.Generic
                     comparer == null)
                 {
                     // ValueType: Devirtualize with EqualityComparer<TKey>.Default intrinsic
-                    while (true)
+                    while ((uint)i < (uint)entries.Length)
                     {
-                        // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                        // Test uint in if rather than loop condition to drop range check for following array access
-                        if ((uint)i >= (uint)entries.Length)
-                        {
-                            break;
-                        }
-
                         if (entries[i].hashCode == hashCode && EqualityComparer<TKey>.Default.Equals(entries[i].key, key))
                         {
                             exists = true;
@@ -715,15 +682,8 @@ namespace System.Collections.Generic
                 else
                 {
                     Debug.Assert(comparer is not null);
-                    while (true)
+                    while ((uint)i < (uint)entries.Length)
                     {
-                        // Should be a while loop https://github.com/dotnet/runtime/issues/9422
-                        // Test uint in if rather than loop condition to drop range check for following array access
-                        if ((uint)i >= (uint)entries.Length)
-                        {
-                            break;
-                        }
-
                         if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key))
                         {
                             exists = true;
@@ -747,8 +707,8 @@ namespace System.Collections.Generic
                 if (dictionary._freeCount > 0)
                 {
                     index = dictionary._freeList;
-                    Debug.Assert((StartOfFreeList - entries[dictionary._freeList].next) >= -1, "shouldn't overflow because `next` cannot underflow");
-                    dictionary._freeList = StartOfFreeList - entries[dictionary._freeList].next;
+                    Debug.Assert((StartOfFreeList - entries[index].next) >= -1, "shouldn't overflow because `next` cannot underflow");
+                    dictionary._freeList = StartOfFreeList - entries[index].next;
                     dictionary._freeCount--;
                 }
                 else
@@ -757,11 +717,11 @@ namespace System.Collections.Generic
                     if (count == entries.Length)
                     {
                         dictionary.Resize();
+                        entries = dictionary._entries;
                         bucket = ref dictionary.GetBucket(hashCode);
                     }
                     index = count;
                     dictionary._count = count + 1;
-                    entries = dictionary._entries;
                 }
 
                 ref Entry entry = ref entries![index];
